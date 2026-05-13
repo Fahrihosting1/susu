@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getBotSettings, createOrUpdateBotSettings } from '@/lib/github-db'
-import { getCurrentUser } from '@/lib/auth'
+import { getSession } from '@/lib/auth'
 import crypto from 'crypto'
 
 // Generate a secure API key
@@ -9,17 +9,17 @@ function generateApiKey(): string {
 }
 
 // GET /api/whatsapp/settings - Get WhatsApp bot settings
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    const user = await getCurrentUser()
-    if (!user) {
+    const session = await getSession()
+    if (!session) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    const botSettings = await getBotSettings(user.id)
+    const botSettings = await getBotSettings(session.id)
 
     return NextResponse.json({
       success: true,
@@ -43,8 +43,8 @@ export async function GET(request: NextRequest) {
 // POST /api/whatsapp/settings - Save WhatsApp bot settings
 export async function POST(request: NextRequest) {
   try {
-    const user = await getCurrentUser()
-    if (!user) {
+    const session = await getSession()
+    if (!session) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -54,20 +54,20 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { waNumber, action } = body
 
-    const botSettings = await getBotSettings(user.id)
+    const botSettings = await getBotSettings(session.id)
 
     if (action === 'generate_api_key') {
       // Generate new API key
       const newApiKey = generateApiKey()
       
       if (botSettings) {
-        await createOrUpdateBotSettings(user.id, {
+        await createOrUpdateBotSettings(session.id, {
           ...botSettings,
           waApiKey: newApiKey,
         })
       } else {
         // Create new bot settings with WhatsApp
-        await createOrUpdateBotSettings(user.id, {
+        await createOrUpdateBotSettings(session.id, {
           botToken: '',
           ownerId: '',
           isActive: false,
@@ -96,12 +96,12 @@ export async function POST(request: NextRequest) {
       const formattedNumber = waNumber.replace(/\D/g, '')
 
       if (botSettings) {
-        await createOrUpdateBotSettings(user.id, {
+        await createOrUpdateBotSettings(session.id, {
           ...botSettings,
           waNumber: formattedNumber,
         })
       } else {
-        await createOrUpdateBotSettings(user.id, {
+        await createOrUpdateBotSettings(session.id, {
           botToken: '',
           ownerId: '',
           isActive: false,
@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
       const { connected, sessionId } = body
 
       if (botSettings) {
-        await createOrUpdateBotSettings(user.id, {
+        await createOrUpdateBotSettings(session.id, {
           ...botSettings,
           waConnected: connected,
           waSessionId: sessionId || botSettings.waSessionId,
@@ -150,20 +150,20 @@ export async function POST(request: NextRequest) {
 }
 
 // DELETE /api/whatsapp/settings - Clear WhatsApp settings
-export async function DELETE(request: NextRequest) {
+export async function DELETE() {
   try {
-    const user = await getCurrentUser()
-    if (!user) {
+    const session = await getSession()
+    if (!session) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    const botSettings = await getBotSettings(user.id)
+    const botSettings = await getBotSettings(session.id)
 
     if (botSettings) {
-      await createOrUpdateBotSettings(user.id, {
+      await createOrUpdateBotSettings(session.id, {
         ...botSettings,
         waNumber: undefined,
         waApiKey: undefined,

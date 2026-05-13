@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getBotSettings, getOrderById, updateOrder, createPayment, getPaymentSettings, getQrisSettingsByUserId, getAdminQrisSettings } from '@/lib/github-db'
-import { createOrkutQris, checkOrkutPaymentStatus } from '@/lib/orkut'
-import { createMidtransQris, checkMidtransStatus } from '@/lib/midtrans'
+import { createOrkutQrisPayment, checkOrkutPaymentStatus } from '@/lib/orkut'
+import { createMidtransQrisPayment, checkMidtransPaymentStatus } from '@/lib/midtrans'
 
 // POST /api/whatsapp/payment - Create QRIS payment for order
 export async function POST(request: NextRequest) {
@@ -81,23 +81,15 @@ export async function POST(request: NextRequest) {
 
       // Check for user's own QRIS or use admin's
       const userQris = await getQrisSettingsByUserId(userId)
-      const qrisSettings = userQris || await getAdminQrisSettings()
+      const qrisType = userQris ? 'user' : 'admin'
 
-      if (!qrisSettings) {
-        return NextResponse.json(
-          { error: 'QRIS not configured' },
-          { status: 400 }
-        )
-      }
-
-      // Create Orkut QRIS
-      const orkutResult = await createOrkutQris({
+      // Create Orkut QRIS using the correct function
+      const orkutResult = await createOrkutQrisPayment(
         amount,
-        orderId: order.id,
-        buyerName: order.buyerName,
-        codeQr: qrisSettings.codeQr,
-        apiKey: qrisSettings.apiKey,
-      })
+        `Order ${order.id}`,
+        qrisType,
+        userId
+      )
 
       if (!orkutResult.success) {
         return NextResponse.json(
@@ -106,9 +98,10 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      qrisUrl = orkutResult.qrisUrl || null
+      qrisUrl = orkutResult.qrsImageUrl || null
       qrString = orkutResult.qrString || null
       transactionId = orkutResult.transactionId || null
+      amount = orkutResult.amount // Include fee
 
     } else if (paymentMethod === 'midtrans') {
       if (!paymentSettings.midtransEnabled) {
@@ -118,29 +111,13 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Calculate fee
-      let fee = 0
-      if (paymentSettings.midtransFeeType === 'fixed') {
-        fee = paymentSettings.midtransFeeAmount
-      } else if (paymentSettings.midtransFeeType === 'percent') {
-        fee = Math.ceil(amount * (paymentSettings.midtransFeeAmount / 100))
-      }
-
-      // Add random fee
-      const randomFee = Math.floor(
-        Math.random() * (paymentSettings.midtransRandomFeeMax - paymentSettings.midtransRandomFeeMin + 1)
-      ) + paymentSettings.midtransRandomFeeMin
-
-      amount = amount + fee + randomFee
-
-      // Create Midtrans QRIS
-      const midtransResult = await createMidtransQris({
-        orderId: order.id,
+      // Create Midtrans QRIS using the correct function
+      const midtransResult = await createMidtransQrisPayment(
+        order.id,
         amount,
-        buyerName: order.buyerName,
-        serverKey: paymentSettings.midtransServerKey,
-        isProduction: paymentSettings.midtransIsProduction,
-      })
+        order.buyerName,
+        order.buyerPhone ? `${order.buyerPhone}@email.com` : undefined
+      )
 
       if (!midtransResult.success) {
         return NextResponse.json(
@@ -149,9 +126,10 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      qrisUrl = midtransResult.qrisUrl || null
+      qrisUrl = midtransResult.qrCodeUrl || null
       qrString = midtransResult.qrString || null
       transactionId = midtransResult.transactionId || null
+      amount = midtransResult.totalAmount || amount
     }
 
     // Create payment record
@@ -260,26 +238,22 @@ export async function GET(request: NextRequest) {
     let status = 'pending'
 
     if (method === 'midtrans') {
-      const result = await checkMidtransStatus({
-        transactionId: txId,
-        serverKey: paymentSettings.midtransServerKey,
-        isProduction: paymentSettings.midtransIsProduction,
-      })
-      isPaid = result.isPaid
-      status = result.status
+      const result = await checkMidtransPaymentStatus(txId)
+      isPaid = result.transactionStatus === 'settlement' || result.transactionStatus === 'capture'
+      status = result.transactionStatus || 'pending'
     } else {
-      // Orkut
+      // Orkut - check if user has their own QRIS
       const userQris = await getQrisSettingsByUserId(userId)
-      const qrisSettings = userQris || await getAdminQrisSettings()
-
-      if (qrisSettings) {
-        const result = await checkOrkutPaymentStatus({
-          transactionId: txId,
-          apiKey: qrisSettings.apiKey,
-        })
-        isPaid = result.isPaid
-        status = result.status
-      }
+      const qrisType = userQris ? 'user' : 'admin'
+      
+      const result = await checkOrkutPaymentStatus(
+        txId,
+        qrisType,
+        userId,
+        order?.totalPrice
+      )
+      isPaid = result.status === 'paid'
+      status = result.status
     }
 
     return NextResponse.json({

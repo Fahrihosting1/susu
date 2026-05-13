@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCurrentUser } from '@/lib/auth'
+import { getSession } from '@/lib/auth'
 
 // GET /api/whatsapp/download-bot - Redirect to GitHub or provide instructions
 export async function GET(request: NextRequest) {
   try {
-    const user = await getCurrentUser()
-    if (!user) {
-      return NextResponse.redirect('/login')
+    const session = await getSession()
+    if (!session) {
+      return NextResponse.redirect(new URL('/login', request.url))
     }
 
     // Return HTML page with download instructions
@@ -133,6 +133,6 @@ npm start</code></pre>
     })
   } catch (error) {
     console.error('Download bot error:', error)
-    return NextResponse.redirect('/dashboard/settings')
+    return NextResponse.redirect(new URL('/dashboard/settings', request.url))
   }
 }
