@@ -19,8 +19,13 @@ import {
   Zap,
   CreditCard,
   Bot,
-  HelpCircle
+  HelpCircle,
+  Smartphone,
+  Copy,
+  Wifi,
+  WifiOff
 } from 'lucide-react'
+import { toast } from 'sonner'
 import {
   Dialog,
   DialogContent,
@@ -101,12 +106,24 @@ const formatTime = (dateStr: string) => {
   })
 }
 
+interface BotStatus {
+  connected: boolean
+  pairingCode: string | null
+  phoneNumber: string
+  lastUpdate: string
+  error: string | null
+  nodeVersion: string
+  restartAttempts: number
+}
+
 export default function UserConsolePage() {
   const [logs, setLogs] = useState<ErrorLog[]>([])
   const [loading, setLoading] = useState(true)
-  const [autoRefresh, setAutoRefresh] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState(true)
   const [selectedLog, setSelectedLog] = useState<ErrorLog | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
+  const [botStatus, setBotStatus] = useState<BotStatus | null>(null)
+  const [botLoading, setBotLoading] = useState(true)
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -122,16 +139,59 @@ export default function UserConsolePage() {
     }
   }, [])
 
+  const fetchBotStatus = useCallback(async () => {
+    try {
+      // Get user settings first to get their API URL
+      const settingsRes = await fetch('/api/settings')
+      if (!settingsRes.ok) return
+      
+      const settings = await settingsRes.json()
+      const apiUrl = settings.apiUrl || settings.botApiUrl
+      
+      if (!apiUrl) {
+        setBotStatus(null)
+        setBotLoading(false)
+        return
+      }
+
+      const statusRes = await fetch(`${apiUrl}/status`, {
+        headers: {
+          'Authorization': `Bearer ${settings.apiKey || ''}`
+        }
+      })
+      
+      if (statusRes.ok) {
+        const data = await statusRes.json()
+        setBotStatus(data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch bot status:', error)
+    } finally {
+      setBotLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchLogs()
-  }, [fetchLogs])
+    fetchBotStatus()
+  }, [fetchLogs, fetchBotStatus])
 
   useEffect(() => {
     if (autoRefresh) {
-      const interval = setInterval(fetchLogs, 15000)
+      const interval = setInterval(() => {
+        fetchLogs()
+        fetchBotStatus()
+      }, 5000) // Refresh every 5 seconds for pairing code
       return () => clearInterval(interval)
     }
-  }, [autoRefresh, fetchLogs])
+  }, [autoRefresh, fetchLogs, fetchBotStatus])
+
+  const copyPairingCode = () => {
+    if (botStatus?.pairingCode) {
+      navigator.clipboard.writeText(botStatus.pairingCode)
+      toast.success('Pairing code disalin!')
+    }
+  }
 
   const newCount = logs.filter(l => l.status === 'new').length
   const errorCount = logs.filter(l => l.severity === 'error' || l.severity === 'critical').length
@@ -181,6 +241,129 @@ export default function UserConsolePage() {
           <p className="text-2xl font-bold text-orange-500 mt-1">{errorCount}</p>
         </div>
       </div>
+
+      {/* WhatsApp Bot Status */}
+      <NeoCard className="bg-card border-border">
+        <NeoCardHeader className="flex flex-row items-center justify-between">
+          <NeoCardTitle className="text-foreground flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+              <Smartphone className="w-4 h-4 text-emerald-500" />
+            </div>
+            WhatsApp Bot Status
+          </NeoCardTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={fetchBotStatus}
+            disabled={botLoading}
+          >
+            <RefreshCw className={`w-4 h-4 ${botLoading ? 'animate-spin' : ''}`} />
+          </Button>
+        </NeoCardHeader>
+        <NeoCardContent>
+          {botLoading ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <RefreshCw className="w-8 h-8 mx-auto mb-2 animate-spin" />
+              <p>Memuat status bot...</p>
+            </div>
+          ) : !botStatus ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <WifiOff className="w-12 h-12 mx-auto mb-3 text-zinc-600" />
+              <p>Bot belum dikonfigurasi</p>
+              <p className="text-sm mt-1">Atur API URL di halaman Settings</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Connection Status */}
+              <div className={`p-4 rounded-xl border ${botStatus.connected 
+                ? 'bg-emerald-500/10 border-emerald-500/30' 
+                : 'bg-amber-500/10 border-amber-500/30'}`}
+              >
+                <div className="flex items-center gap-3">
+                  {botStatus.connected ? (
+                    <>
+                      <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+                      <span className="text-emerald-500 font-semibold">CONNECTED</span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
+                      <span className="text-amber-500 font-semibold">DISCONNECTED</span>
+                    </>
+                  )}
+                </div>
+                <p className="text-muted-foreground text-sm mt-2">
+                  {botStatus.connected 
+                    ? 'Bot terhubung dan siap menerima pesan' 
+                    : 'Menunggu koneksi...'}
+                </p>
+              </div>
+
+              {/* Pairing Code - Show when disconnected */}
+              {!botStatus.connected && botStatus.pairingCode && (
+                <div className="bg-gradient-to-br from-emerald-500/20 to-teal-500/20 rounded-xl p-6 border border-emerald-500/30">
+                  <div className="text-center">
+                    <p className="text-emerald-400 text-sm font-medium mb-3">PAIRING CODE</p>
+                    <div className="flex items-center justify-center gap-2 mb-4">
+                      <code className="text-3xl md:text-4xl font-mono font-bold tracking-[0.3em] text-white bg-zinc-900 px-6 py-3 rounded-xl">
+                        {botStatus.pairingCode}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={copyPairingCode}
+                        className="shrink-0"
+                      >
+                        <Copy className="w-5 h-5" />
+                      </Button>
+                    </div>
+                    <p className="text-amber-400 text-sm">
+                      Buka WhatsApp &gt; Perangkat Tertaut &gt; Tautkan Perangkat &gt; Masukkan kode ini
+                    </p>
+                    <p className="text-red-400 text-xs mt-2">
+                      Kode akan expired dalam 60 detik. Masukkan segera!
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Error */}
+              {botStatus.error && (
+                <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/30">
+                  <p className="text-red-400 text-sm font-medium">Error:</p>
+                  <p className="text-red-300 text-sm mt-1">{botStatus.error}</p>
+                </div>
+              )}
+
+              {/* Info Grid */}
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="p-3 bg-muted rounded-lg">
+                  <p className="text-muted-foreground text-xs mb-1">Node.js</p>
+                  <p className="text-foreground font-mono">{botStatus.nodeVersion || 'N/A'}</p>
+                </div>
+                <div className="p-3 bg-muted rounded-lg">
+                  <p className="text-muted-foreground text-xs mb-1">Phone</p>
+                  <p className="text-foreground font-mono">{botStatus.phoneNumber || 'N/A'}</p>
+                </div>
+                <div className="p-3 bg-muted rounded-lg">
+                  <p className="text-muted-foreground text-xs mb-1">Restart Attempts</p>
+                  <p className="text-foreground">{botStatus.restartAttempts || 0}/5</p>
+                </div>
+                <div className="p-3 bg-muted rounded-lg">
+                  <p className="text-muted-foreground text-xs mb-1">Last Update</p>
+                  <p className="text-foreground text-xs">
+                    {botStatus.lastUpdate ? new Date(botStatus.lastUpdate).toLocaleString('id-ID') : 'N/A'}
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-muted-foreground text-xs text-center">
+                Auto refresh setiap 5 detik
+              </p>
+            </div>
+          )}
+        </NeoCardContent>
+      </NeoCard>
 
       {/* Info Card */}
       <div className="bg-blue-500/10 rounded-xl p-4 border border-blue-500/20 flex items-start gap-3">

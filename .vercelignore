@@ -1,5 +1,0 @@
-# Ignore WhatsApp bot folder (deployed separately to cPanel)
-whatsapp-bot/
-
-# Ignore deployment guides
-DEPLOY-CPANEL.md
