@@ -1,23 +1,22 @@
 /**
- * WhatsApp Store Bot
+ * WhatsApp Store Bot - cPanel Version
  * Menggunakan Baileys dengan Pairing Code
  * 
- * Setup:
- * 1. Edit config.json dengan API Key dan User ID dari dashboard
+ * Setup untuk cPanel:
+ * 1. Edit config.json dengan API Key, User ID, dan Nomor WA
  * 2. npm install
- * 3. npm start
- * 4. Masukkan nomor WhatsApp saat diminta
- * 5. Gunakan pairing code yang muncul di WhatsApp > Linked Devices > Link a Device
+ * 3. Start via cPanel Node.js Selector
+ * 4. Buka URL aplikasi di browser untuk melihat Pairing Code
+ * 5. Link pairing code di WhatsApp > Linked Devices > Link a Device
  */
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeInMemoryStore } = require('@whiskeysockets/baileys')
 const { Boom } = require('@hapi/boom')
 const pino = require('pino')
-const chalk = require('chalk')
-const readline = require('readline')
 const axios = require('axios')
 const fs = require('fs')
 const path = require('path')
+const http = require('http')
 
 // Load config
 const config = require('./config.json')
@@ -27,7 +26,17 @@ const API_KEY = config.apiKey
 const USER_ID = config.userId
 const OWNER = config.ownerNumber
 const BOT_NAME = config.botName || 'Store Bot'
-const PREFIX = config.prefix || '.'
+const PHONE_NUMBER = config.phoneNumber || config.ownerNumber // Nomor untuk pairing
+const HTTP_PORT = config.httpPort || 3000
+
+// Status untuk HTTP server
+let botStatus = {
+  connected: false,
+  pairingCode: null,
+  phoneNumber: PHONE_NUMBER,
+  lastUpdate: new Date().toISOString(),
+  error: null
+}
 
 // API Headers
 const apiHeaders = {
@@ -37,19 +46,23 @@ const apiHeaders = {
 }
 
 // Store untuk menyimpan data sementara
-const userState = new Map() // Untuk tracking state user (sedang pilih kategori, produk, dll)
-const orderCache = new Map() // Cache order yang sedang diproses
-
-// Readline interface
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-})
-
-const question = (text) => new Promise((resolve) => rl.question(text, resolve))
+const userState = new Map()
+const orderCache = new Map()
 
 // Memory store
 const store = makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) })
+
+// Logging function
+function log(message, type = 'INFO') {
+  const timestamp = new Date().toISOString()
+  const logMessage = `[${timestamp}] [${type}] ${message}`
+  console.log(logMessage)
+  
+  // Also write to log file
+  try {
+    fs.appendFileSync('./bot.log', logMessage + '\n')
+  } catch (e) {}
+}
 
 // Format currency
 function formatRupiah(amount) {
@@ -60,13 +73,162 @@ function formatRupiah(amount) {
   }).format(amount)
 }
 
+// HTTP Server untuk menampilkan status dan pairing code
+function startHttpServer() {
+  const server = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>WhatsApp Bot Status</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="5">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 20px;
+      padding: 40px;
+      max-width: 500px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    h1 { 
+      color: #25D366;
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
+    .status {
+      display: inline-block;
+      padding: 8px 20px;
+      border-radius: 20px;
+      font-weight: bold;
+      margin: 15px 0;
+    }
+    .connected { background: #25D366; color: white; }
+    .disconnected { background: #ff6b6b; color: white; }
+    .waiting { background: #ffd93d; color: #333; }
+    .pairing-code {
+      background: #25D366;
+      color: white;
+      font-size: 36px;
+      font-weight: bold;
+      letter-spacing: 8px;
+      padding: 20px 30px;
+      border-radius: 15px;
+      margin: 20px 0;
+      font-family: monospace;
+    }
+    .info {
+      color: rgba(255,255,255,0.8);
+      font-size: 14px;
+      margin: 10px 0;
+      line-height: 1.6;
+    }
+    .phone {
+      color: #25D366;
+      font-size: 18px;
+      margin: 10px 0;
+    }
+    .instructions {
+      background: rgba(255,255,255,0.1);
+      border-radius: 10px;
+      padding: 15px;
+      margin-top: 20px;
+      text-align: left;
+    }
+    .instructions h3 {
+      color: #25D366;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    .instructions ol {
+      color: rgba(255,255,255,0.8);
+      font-size: 13px;
+      padding-left: 20px;
+    }
+    .instructions li { margin: 5px 0; }
+    .error {
+      background: rgba(255,107,107,0.2);
+      border: 1px solid #ff6b6b;
+      color: #ff6b6b;
+      padding: 10px;
+      border-radius: 10px;
+      margin: 15px 0;
+      font-size: 13px;
+    }
+    .refresh {
+      color: rgba(255,255,255,0.5);
+      font-size: 12px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>WhatsApp Bot Status</h1>
+    <p class="info">${BOT_NAME}</p>
+    
+    ${botStatus.connected ? `
+      <div class="status connected">CONNECTED</div>
+      <p class="info">Bot sudah terhubung dan siap menerima pesan!</p>
+    ` : botStatus.pairingCode ? `
+      <div class="status waiting">WAITING PAIRING</div>
+      <p class="phone">+${botStatus.phoneNumber}</p>
+      <div class="pairing-code">${botStatus.pairingCode}</div>
+      <div class="instructions">
+        <h3>Cara Pairing:</h3>
+        <ol>
+          <li>Buka WhatsApp di HP</li>
+          <li>Pergi ke Settings > Linked Devices</li>
+          <li>Tap "Link a Device"</li>
+          <li>Tap "Link with phone number instead"</li>
+          <li>Masukkan kode di atas</li>
+        </ol>
+      </div>
+    ` : `
+      <div class="status disconnected">STARTING...</div>
+      <p class="info">Bot sedang memulai, tunggu sebentar...</p>
+    `}
+    
+    ${botStatus.error ? `<div class="error">${botStatus.error}</div>` : ''}
+    
+    <p class="refresh">Auto refresh setiap 5 detik</p>
+    <p class="info" style="margin-top: 10px; font-size: 12px;">Last update: ${botStatus.lastUpdate}</p>
+  </div>
+</body>
+</html>
+    `
+    
+    res.end(html)
+  })
+  
+  server.listen(HTTP_PORT, '0.0.0.0', () => {
+    log(`HTTP Server running on port ${HTTP_PORT}`)
+  })
+}
+
 // API Functions
 async function verifyConnection() {
   try {
     const res = await axios.post(`${API_URL}/api/whatsapp/verify`, {}, { headers: apiHeaders })
     return res.data.valid
   } catch (error) {
-    console.error(chalk.red('Failed to verify API connection:'), error.message)
+    log(`Failed to verify API: ${error.message}`, 'ERROR')
     return false
   }
 }
@@ -75,7 +237,7 @@ async function updateConnectionStatus(connected) {
   try {
     await axios.put(`${API_URL}/api/whatsapp/verify`, { connected }, { headers: apiHeaders })
   } catch (error) {
-    console.error('Failed to update connection status:', error.message)
+    log(`Failed to update status: ${error.message}`, 'ERROR')
   }
 }
 
@@ -84,7 +246,7 @@ async function getProducts() {
     const res = await axios.get(`${API_URL}/api/whatsapp/products`, { headers: apiHeaders })
     return res.data
   } catch (error) {
-    console.error('Failed to get products:', error.message)
+    log(`Failed to get products: ${error.message}`, 'ERROR')
     return { categories: [] }
   }
 }
@@ -94,7 +256,7 @@ async function createOrder(data) {
     const res = await axios.post(`${API_URL}/api/whatsapp/orders`, data, { headers: apiHeaders })
     return res.data
   } catch (error) {
-    console.error('Failed to create order:', error.message)
+    log(`Failed to create order: ${error.message}`, 'ERROR')
     return { error: error.response?.data?.error || 'Gagal membuat order' }
   }
 }
@@ -104,7 +266,6 @@ async function getOrder(orderId) {
     const res = await axios.get(`${API_URL}/api/whatsapp/orders?orderId=${orderId}`, { headers: apiHeaders })
     return res.data
   } catch (error) {
-    console.error('Failed to get order:', error.message)
     return null
   }
 }
@@ -114,7 +275,7 @@ async function createPayment(orderId) {
     const res = await axios.post(`${API_URL}/api/whatsapp/payment`, { orderId }, { headers: apiHeaders })
     return res.data
   } catch (error) {
-    console.error('Failed to create payment:', error.message)
+    log(`Failed to create payment: ${error.message}`, 'ERROR')
     return { error: error.response?.data?.error || 'Gagal membuat pembayaran' }
   }
 }
@@ -124,7 +285,6 @@ async function checkPayment(orderId) {
     const res = await axios.get(`${API_URL}/api/whatsapp/payment?orderId=${orderId}`, { headers: apiHeaders })
     return res.data
   } catch (error) {
-    console.error('Failed to check payment:', error.message)
     return { isPaid: false }
   }
 }
@@ -137,7 +297,6 @@ async function completeOrder(orderId) {
     }, { headers: apiHeaders })
     return res.data
   } catch (error) {
-    console.error('Failed to complete order:', error.message)
     return { error: error.response?.data?.error || 'Gagal menyelesaikan order' }
   }
 }
@@ -145,7 +304,6 @@ async function completeOrder(orderId) {
 // Message handlers
 async function handleStart(sock, sender) {
   const data = await getProducts()
-  const botSettings = data.botSettings || {}
   
   let text = `*${BOT_NAME}*\n\n`
   text += `Selamat datang di ${BOT_NAME}!\n`
@@ -160,7 +318,6 @@ async function handleStart(sock, sender) {
     text += `\n_Balas dengan nomor kategori untuk melihat produk_`
   }
   
-  // Save state
   userState.set(sender, { 
     step: 'select_category',
     categories: data.categories 
@@ -245,7 +402,6 @@ async function handleBuyConfirmation(sock, sender) {
   const product = state.product
   const buyerContact = sender.replace('@s.whatsapp.net', '')
   
-  // Create order
   const orderResult = await createOrder({
     productId: product.id,
     quantity: 1,
@@ -261,8 +417,6 @@ async function handleBuyConfirmation(sock, sender) {
   }
   
   const order = orderResult.order
-  
-  // Create payment
   const paymentResult = await createPayment(order.id)
   
   if (paymentResult.error) {
@@ -282,7 +436,6 @@ async function handleBuyConfirmation(sock, sender) {
   
   await sock.sendMessage(sender, { text })
   
-  // Send QRIS image
   if (payment.qrisUrl) {
     await sock.sendMessage(sender, { 
       image: { url: payment.qrisUrl },
@@ -290,21 +443,18 @@ async function handleBuyConfirmation(sock, sender) {
     })
   }
   
-  // Save order for checking
   userState.set(sender, {
     step: 'waiting_payment',
     orderId: order.id
   })
   
-  // Start payment checker
   startPaymentChecker(sock, sender, order.id)
-  
   return true
 }
 
 async function startPaymentChecker(sock, sender, orderId) {
   let attempts = 0
-  const maxAttempts = 60 // 5 minutes (5 seconds interval)
+  const maxAttempts = 60
   
   const checkInterval = setInterval(async () => {
     attempts++
@@ -314,12 +464,11 @@ async function startPaymentChecker(sock, sender, orderId) {
     if (result.isPaid) {
       clearInterval(checkInterval)
       
-      // Complete order and deliver items
       const completeResult = await completeOrder(orderId)
       
       if (completeResult.error) {
         await sock.sendMessage(sender, { 
-          text: `Pembayaran berhasil tapi gagal memproses order: ${completeResult.error}\nHubungi admin.` 
+          text: `Pembayaran berhasil tapi gagal memproses: ${completeResult.error}\nHubungi admin.` 
         })
         return
       }
@@ -346,7 +495,7 @@ async function startPaymentChecker(sock, sender, orderId) {
       })
       userState.delete(sender)
     }
-  }, 5000) // Check every 5 seconds
+  }, 5000)
 }
 
 async function handleMessage(sock, m) {
@@ -364,12 +513,11 @@ async function handleMessage(sock, m) {
     } else if (messageType === 'extendedTextMessage') {
       text = m.message.extendedTextMessage.text
     } else {
-      return // Only handle text messages
+      return
     }
     
     const lowerText = text.toLowerCase().trim()
     
-    // Commands
     if (lowerText === 'menu' || lowerText === 'start' || lowerText === '/start' || lowerText === '.menu') {
       return await handleStart(sock, sender)
     }
@@ -391,7 +539,6 @@ async function handleMessage(sock, m) {
       return await handleBuyConfirmation(sock, sender)
     }
     
-    // Check if it's a number (category or product selection)
     if (/^\d+$/.test(text.trim())) {
       const state = userState.get(sender)
       if (state?.step === 'select_category') {
@@ -401,30 +548,42 @@ async function handleMessage(sock, m) {
       }
     }
     
-    // Default: show menu
     await sock.sendMessage(sender, { 
       text: `Ketik *menu* untuk melihat daftar produk.` 
     })
     
   } catch (error) {
-    console.error('Error handling message:', error)
+    log(`Error handling message: ${error.message}`, 'ERROR')
   }
 }
 
 // Main function
 async function startBot() {
-  console.log(chalk.cyan('='.repeat(50)))
-  console.log(chalk.cyan.bold('  WhatsApp Store Bot'))
-  console.log(chalk.cyan('='.repeat(50)))
+  log('=' .repeat(50))
+  log('WhatsApp Store Bot - cPanel Version')
+  log('=' .repeat(50))
+  
+  // Start HTTP server for pairing code display
+  startHttpServer()
   
   // Verify API connection
-  console.log(chalk.yellow('\nVerifying API connection...'))
+  log('Verifying API connection...')
   const isValid = await verifyConnection()
   if (!isValid) {
-    console.log(chalk.red('Failed to verify API. Please check your config.json'))
-    process.exit(1)
+    botStatus.error = 'Failed to verify API. Check config.json'
+    botStatus.lastUpdate = new Date().toISOString()
+    log('Failed to verify API. Check config.json', 'ERROR')
+    return
   }
-  console.log(chalk.green('API connection verified!'))
+  log('API connection verified!')
+  
+  // Validate phone number
+  if (!PHONE_NUMBER) {
+    botStatus.error = 'phoneNumber tidak diset di config.json'
+    botStatus.lastUpdate = new Date().toISOString()
+    log('phoneNumber tidak diset di config.json', 'ERROR')
+    return
+  }
   
   // Setup auth
   const { state, saveCreds } = await useMultiFileAuthState('./session')
@@ -448,66 +607,85 @@ async function startBot() {
   
   // Request pairing code if not registered
   if (!sock.authState.creds.registered) {
-    const phoneNumber = await question(chalk.blue.bold('\nMasukkan Nomor WhatsApp (contoh: 628123456789):\n'))
-    const code = await sock.requestPairingCode(phoneNumber.trim())
-    console.log(chalk.green.bold(`\nKode Pairing: ${code}`))
-    console.log(chalk.yellow('Buka WhatsApp > Linked Devices > Link a Device > Masukkan kode di atas\n'))
+    log(`Requesting pairing code for ${PHONE_NUMBER}...`)
+    
+    try {
+      // Clean phone number (remove + and spaces)
+      const cleanNumber = PHONE_NUMBER.replace(/[^0-9]/g, '')
+      const code = await sock.requestPairingCode(cleanNumber)
+      
+      botStatus.pairingCode = code
+      botStatus.phoneNumber = cleanNumber
+      botStatus.lastUpdate = new Date().toISOString()
+      
+      log(`Pairing Code: ${code}`)
+      log(`Buka browser ke URL aplikasi untuk melihat kode pairing`)
+    } catch (error) {
+      botStatus.error = `Failed to get pairing code: ${error.message}`
+      botStatus.lastUpdate = new Date().toISOString()
+      log(`Failed to get pairing code: ${error.message}`, 'ERROR')
+    }
   }
   
   // Connection event
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update
     
+    botStatus.lastUpdate = new Date().toISOString()
+    
     if (connection === 'close') {
       const reason = new Boom(lastDisconnect?.error)?.output?.statusCode
-      console.log(chalk.red('\nConnection closed:', lastDisconnect?.error?.message || 'Unknown'))
+      const errorMsg = lastDisconnect?.error?.message || 'Unknown'
+      log(`Connection closed: ${errorMsg}`, 'WARN')
+      
+      botStatus.connected = false
+      botStatus.pairingCode = null
       
       await updateConnectionStatus(false)
       
       if (reason === DisconnectReason.badSession) {
-        console.log(chalk.yellow('Bad session. Please delete session folder and restart.'))
-        process.exit()
+        botStatus.error = 'Bad session. Delete session folder and restart.'
+        log('Bad session. Delete session folder and restart.', 'ERROR')
       } else if (reason === DisconnectReason.connectionReplaced) {
-        console.log(chalk.yellow('Connection replaced. Please close other sessions.'))
-        process.exit()
+        botStatus.error = 'Connection replaced. Close other sessions.'
+        log('Connection replaced. Close other sessions.', 'ERROR')
       } else if (reason === DisconnectReason.loggedOut) {
-        console.log(chalk.yellow('Logged out. Please delete session folder and restart.'))
+        botStatus.error = 'Logged out. Delete session folder and restart.'
+        log('Logged out. Deleting session...', 'WARN')
         fs.rmSync('./session', { recursive: true, force: true })
-        process.exit()
+        setTimeout(() => startBot(), 3000)
       } else if (reason === DisconnectReason.restartRequired) {
-        console.log(chalk.yellow('Restarting...'))
-        startBot()
+        log('Restarting...')
+        setTimeout(() => startBot(), 1000)
       } else {
-        console.log(chalk.yellow('Reconnecting...'))
-        startBot()
+        log('Reconnecting in 3 seconds...')
+        setTimeout(() => startBot(), 3000)
       }
     } else if (connection === 'open') {
-      console.log(chalk.green.bold('\nBot Connected Successfully!'))
-      console.log(chalk.cyan(`Bot Name: ${BOT_NAME}`))
-      console.log(chalk.cyan(`Owner: ${OWNER}`))
+      log('Bot Connected Successfully!')
+      
+      botStatus.connected = true
+      botStatus.pairingCode = null
+      botStatus.error = null
       
       await updateConnectionStatus(true)
       
-      // Send notification to owner
       try {
         await sock.sendMessage(`${OWNER}@s.whatsapp.net`, { 
-          text: `*${BOT_NAME}* terhubung!\n\nKetik *menu* untuk melihat daftar perintah.` 
+          text: `*${BOT_NAME}* terhubung!\n\nKetik *menu* untuk melihat daftar produk.` 
         })
       } catch (e) {
-        console.log(chalk.yellow('Could not send notification to owner'))
+        log('Could not send notification to owner', 'WARN')
       }
     }
   })
   
-  // Credentials update
   sock.ev.on('creds.update', saveCreds)
   
-  // Message event
   sock.ev.on('messages.upsert', async (chatUpdate) => {
     const m = chatUpdate.messages[0]
     if (!m.message) return
     
-    // Handle ephemeral messages
     m.message = Object.keys(m.message)[0] === 'ephemeralMessage' 
       ? m.message.ephemeralMessage.message 
       : m.message
@@ -515,26 +693,18 @@ async function startBot() {
     await handleMessage(sock, m)
   })
   
-  // Auto-read messages
-  if (config.autoRead) {
-    sock.ev.on('messages.upsert', async (chatUpdate) => {
-      const m = chatUpdate.messages[0]
-      if (m.key.remoteJid && !m.key.fromMe) {
-        await sock.readMessages([m.key])
-      }
-    })
-  }
-  
   return sock
 }
 
 // Handle errors
 process.on('uncaughtException', (err) => {
-  console.error(chalk.red('Uncaught Exception:'), err)
+  log(`Uncaught Exception: ${err.message}`, 'ERROR')
+  botStatus.error = err.message
+  botStatus.lastUpdate = new Date().toISOString()
 })
 
 process.on('unhandledRejection', (err) => {
-  console.error(chalk.red('Unhandled Rejection:'), err)
+  log(`Unhandled Rejection: ${err}`, 'ERROR')
 })
 
 // Start

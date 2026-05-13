@@ -1,10 +1,10 @@
 {
   "apiUrl": "https://your-vercel-app.vercel.app",
-  "apiKey": "YOUR_API_KEY_HERE",
-  "userId": "YOUR_USER_ID_HERE",
+  "apiKey": "YOUR_API_KEY_FROM_DASHBOARD",
+  "userId": "YOUR_USER_ID_FROM_DASHBOARD",
   "ownerNumber": "628123456789",
+  "phoneNumber": "628123456789",
   "botName": "Store Bot",
-  "prefix": ".",
-  "autoRead": true,
-  "publicMode": true
+  "httpPort": 3000,
+  "autoRead": true
 }

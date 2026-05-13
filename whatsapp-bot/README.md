@@ -1,134 +1,113 @@
-# WhatsApp Store Bot
+# WhatsApp Store Bot - cPanel Version
 
-Bot WhatsApp untuk toko online menggunakan Baileys dengan sistem Pairing Code.
+Bot WhatsApp untuk toko digital menggunakan Baileys dengan Pairing Code.
+**Dioptimalkan untuk berjalan di cPanel Node.js Selector.**
 
-## Fitur
+## Cara Setup di cPanel
 
-- Menu produk interaktif
-- Pembayaran QRIS otomatis
-- Auto-deliver setelah pembayaran
-- Sinkronisasi dengan dashboard web
+### 1. Upload Files
+- Buka **File Manager** di cPanel
+- Buat folder baru, misal: `wabot`
+- Upload semua file ini ke folder tersebut:
+  - `index.js`
+  - `package.json`
+  - `config.json`
 
-## Persyaratan
-
-- Node.js 18+ 
-- cPanel dengan Node.js atau VPS
-- Akun WhatsApp aktif
-
-## Instalasi
-
-### 1. Upload ke cPanel/VPS
-
-Upload folder `whatsapp-bot` ke server Anda.
-
-### 2. Install Dependencies
-
-```bash
-cd whatsapp-bot
-npm install
-```
-
-### 3. Konfigurasi
-
-Edit file `config.json`:
-
+### 2. Edit config.json
 ```json
 {
-  "apiUrl": "https://your-vercel-app.vercel.app",
-  "apiKey": "YOUR_API_KEY_HERE",
-  "userId": "YOUR_USER_ID_HERE",
+  "apiUrl": "https://domain-vercel-kamu.vercel.app",
+  "apiKey": "API_KEY_DARI_DASHBOARD",
+  "userId": "USER_ID_DARI_DASHBOARD",
   "ownerNumber": "628123456789",
-  "botName": "Store Bot",
-  "prefix": ".",
-  "autoRead": true,
-  "publicMode": true
+  "phoneNumber": "628123456789",
+  "botName": "Nama Bot Kamu",
+  "httpPort": 3000,
+  "autoRead": true
 }
 ```
 
-- `apiUrl`: URL aplikasi Vercel Anda
-- `apiKey`: API Key dari dashboard > Pengaturan > WhatsApp Bot
-- `userId`: User ID Anda dari dashboard
-- `ownerNumber`: Nomor WhatsApp Anda (untuk notifikasi)
-- `botName`: Nama bot yang akan ditampilkan
-- `autoRead`: Auto-read pesan masuk
+**Penting:**
+- `apiUrl`: URL aplikasi Vercel kamu (tanpa / di akhir)
+- `apiKey`: Ambil dari Dashboard > Settings > WhatsApp Bot
+- `userId`: Ambil dari Dashboard > Settings > WhatsApp Bot
+- `phoneNumber`: Nomor WA yang akan dijadikan bot (format: 628xxx)
 
-### 4. Jalankan Bot
+### 3. Setup di Node.js Selector
+1. Buka **Setup Node.js App** di cPanel
+2. Klik **Create Application**
+3. Isi form:
+   - **Node.js version**: Pilih **18.x** atau **20.x** (WAJIB!)
+   - **Application mode**: Production
+   - **Application root**: `wabot` (nama folder)
+   - **Application URL**: Pilih domain/subdomain
+   - **Application startup file**: `index.js`
+4. Klik **CREATE**
 
-```bash
-npm start
-```
+### 4. Install Dependencies
+1. Setelah app dibuat, klik tombol **Run NPM Install**
+2. Tunggu sampai selesai
 
-### 5. Pairing Code
-
-1. Masukkan nomor WhatsApp saat diminta (format: 628xxx)
-2. Buka WhatsApp di HP
-3. Pergi ke Settings > Linked Devices > Link a Device
-4. Pilih "Link with phone number instead"
-5. Masukkan kode pairing yang muncul di terminal
+### 5. Start Bot & Pairing
+1. Klik **Restart** untuk menjalankan bot
+2. **Buka URL aplikasi di browser** (misal: `https://whatsapp.domain.com`)
+3. Kamu akan melihat halaman dengan **Pairing Code**
+4. Buka WhatsApp di HP:
+   - Settings > Linked Devices
+   - Link a Device
+   - Tap "Link with phone number instead"
+   - Masukkan kode pairing yang muncul di browser
+5. Setelah terhubung, halaman akan menunjukkan status **CONNECTED**
 
 ## Perintah Bot
 
 | Perintah | Fungsi |
 |----------|--------|
-| `menu` / `start` | Tampilkan menu utama |
+| `menu` / `start` | Tampilkan menu produk |
 | `1`, `2`, ... | Pilih kategori/produk |
 | `beli` | Konfirmasi pembelian |
 | `cek` | Cek status pembayaran |
 
-## Struktur Folder
-
-```
-whatsapp-bot/
-├── index.js        # Main bot file
-├── config.json     # Konfigurasi
-├── package.json    # Dependencies
-├── session/        # Session WhatsApp (auto-generated)
-└── README.md       # Dokumentasi
-```
-
 ## Troubleshooting
 
-### Bot tidak terhubung ke API
+### Error 503 Service Unavailable
+- **Cek Node.js version** - HARUS 18+ (bukan 10.x atau 14.x)
+- Cek log di cPanel: klik **View Log** di Node.js Selector
+- Pastikan `npm install` sudah dijalankan
 
-1. Pastikan `apiUrl` benar (harus HTTPS)
-2. Pastikan `apiKey` dan `userId` sesuai dengan dashboard
-3. Cek koneksi internet server
+### Pairing Code Tidak Muncul
+- Pastikan `phoneNumber` di config.json sudah diisi dengan benar
+- Format nomor: `628123456789` (tanpa + atau spasi)
+- Refresh halaman browser
+- Cek log untuk error message
 
-### Session expired
+### Bot Tidak Konek ke API
+- Pastikan `apiUrl` benar dan bisa diakses
+- Pastikan `apiKey` dan `userId` sudah benar (copy dari dashboard)
+- Test buka `https://apiUrl/api/whatsapp/verify` di browser
 
-1. Hapus folder `session`
-2. Jalankan ulang bot
-3. Lakukan pairing ulang
+### Connection Replaced
+- Ada sesi WhatsApp lain yang aktif
+- Logout dari WhatsApp Web lain
+- Hapus folder `session` via File Manager
+- Restart bot dan pairing ulang
 
-### Pesan tidak terkirim
+### Session Expired
+- Hapus folder `session` di File Manager
+- Restart bot
+- Pairing ulang dengan kode baru
 
-1. Pastikan nomor tujuan valid
-2. Cek log error di terminal
-3. Restart bot jika perlu
-
-## cPanel Setup
-
-### Menggunakan Node.js Application
-
-1. Login ke cPanel
-2. Pergi ke "Setup Node.js App"
-3. Create Application:
-   - Node.js version: 18+
-   - Application mode: Production
-   - Application root: whatsapp-bot
-   - Application startup file: index.js
-4. Klik "Run NPM Install"
-5. Klik "Run JS Script" atau "Start App"
-
-### Menggunakan PM2 (VPS)
-
-```bash
-npm install -g pm2
-pm2 start index.js --name "wa-bot"
-pm2 save
-pm2 startup
+## Struktur Folder
+```
+wabot/
+├── index.js        # File utama bot
+├── package.json    # Dependencies
+├── config.json     # Konfigurasi (EDIT INI!)
+├── session/        # Session WhatsApp (auto-generated)
+└── bot.log         # Log file (auto-generated)
 ```
 
-## Support
-
-Jika ada masalah, hubungi admin melalui dashboard.
+## Requirements
+- **Node.js 18+** (WAJIB! Baileys tidak support Node.js lama)
+- cPanel dengan Node.js Selector
+- Akun WhatsApp yang akan dijadikan bot
